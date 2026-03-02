@@ -1,0 +1,32 @@
+lidar_localization_node:
+  ros__parameters:
+    odom_frame: "map"
+    base_frame: "base_link"
+    lidar_topic: "/os_cloud_node/points"
+    imu_topic: "/os_imu_node/imu"
+    imu_frequency: 100.0
+    use_fixed_imu_dt: false
+    lidar_frequency: 10.0
+    gyr_dev: 0.001
+    gyr_rw_dev: 2e-05
+    acc_dev: 0.1
+    acc_rw_dev: 1e-04
+    map_path: "/tls_map.bin"
+
+    timestamp_mode: "START_OF_SCAN"
+    calibration_time: 1.0
+    lidar_type: "hesai"
+    solver_max_iter: 300
+    solver_num_threads: 20
+    robust_kernel_scale: 1.0
+    leaf_size: 0.5
+    max_range: 200.0
+    min_range: 1.0
+    
+    m_init_x: 0.0
+    m_init_y: 0.0
+    m_init_z: 0.0
+    m_init_roll: 0.0
+    m_init_pitch: 0.0
+    m_init_yaw: 0.0
+

@@ -1,0 +1,60 @@
+lidar_localization_node:
+  ros__parameters:
+    odom_frame: "map"
+    base_frame: "base_link"
+    lidar_topic: "/hesai/pandar"
+    imu_topic: "/x36d/imu_raw"
+    imu_frequency: 100.0
+    use_fixed_imu_dt: false
+    lidar_frequency: 10.0
+    gyr_dev: 0.001
+    gyr_rw_dev: 2e-05
+    acc_dev: 0.1
+    acc_rw_dev: 1e-04
+    map_path: "/tls_map.bin"
+
+    timestamp_mode: "START_OF_SCAN"
+    calibration_time: 1.0
+    lidar_type: "hesai"
+    solver_max_iter: 300
+    solver_num_threads: 20
+    robust_kernel_scale: 1.0
+    leaf_size: 0.5
+    max_range: 200.0
+    min_range: 1.0
+
+    # Snail Dataset -----------------------------------------------------------------------------------
+    
+    # Basketball court - > 20231007/4 
+    # m_init_x: 6.045545170
+    # m_init_y: -1.624583552
+    # m_init_z: -0.165012460
+    # m_init_roll: -0.01228 
+    # m_init_pitch: -0.15518
+    # m_init_yaw: 2.93862
+
+    # Starlake  - > 20231007/2 
+    # m_init_x: 6.02398
+    # m_init_y: -1.62887
+    # m_init_z: -0.16087
+    # m_init_roll: -0.15519
+    # m_init_pitch: 0.01213
+    # m_init_yaw: 2.97256
+
+    # Software School - > 20231109/4 
+    # m_init_x: 6.2
+    # m_init_y: -1.65532
+    # m_init_z: -0.25231
+    # m_init_roll: -0.020738
+    # m_init_pitch: 0.05766
+    # m_init_yaw: 2.93322
+    
+    # Starlake Tower - > 20240113/1 
+    m_init_x: -30.79470
+    m_init_y: -60.42299
+    m_init_z: 2.30835
+    m_init_roll: -0.01528
+    m_init_pitch: -0.01326
+    m_init_yaw: -1.67300
+
+

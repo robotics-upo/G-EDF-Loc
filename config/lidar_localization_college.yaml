@@ -1,0 +1,50 @@
+lidar_localization_node:
+  ros__parameters:
+    odom_frame: "map"
+    base_frame: "base_link"
+    lidar_topic: "/os_cloud_node/points" 
+    imu_topic: "/os_cloud_node/imu"       
+    map_path: "/new_college_v1.bin"
+    imu_frequency: 100.0      
+    lidar_frequency: 10.0     
+    use_fixed_imu_dt: false   
+    
+    gyr_dev: 0.001       
+    gyr_rw_dev: 0.000004
+    acc_dev: 0.1
+    acc_rw_dev: 0.000006
+    
+    lidar_type: "ouster"              
+    timestamp_mode: "START_OF_SCAN"   
+    calibration_time: 1.5
+    
+    solver_max_iter: 300
+    solver_num_threads: 20
+    robust_kernel_scale: 1.0
+    leaf_size: 0.1
+    max_range: 200.0
+    min_range: 1.0
+    
+    # Quad medium
+    m_init_x: 6.3672
+    m_init_y: -56.3766
+    m_init_z: 0.9201
+    m_init_roll: 0.0200
+    m_init_pitch: -0.0188
+    m_init_yaw: 1.0829
+
+    # Quad hard
+    # m_init_x: 6.5101
+    # m_init_y: -56.4583
+    # m_init_z: 1.0565
+    # m_init_roll: 0.0075
+    # m_init_pitch: 0.0049
+    # m_init_yaw: 1.1420
+
+    # Park
+    # m_init_x: 6.1087
+    # m_init_y: -56.6005
+    # m_init_z: 0.9976
+    # m_init_roll: -0.0008
+    # m_init_pitch: -0.0188
+    # m_init_yaw: 0.8763
