@@ -39,7 +39,7 @@ bool ScanProcessing::unwrap(pcl::PointCloud<PointXYZT> &in,
                             std::vector<pcl::PointXYZ> &out, 
                             double scan_header_time, 
                             double lidar_period_param, 
-                            const std::string& timestamp_mode, // "TIME_FROM_PTP_1588", "TIME_FROM_ROS_TIME", etc.
+                            const std::string& timestamp_mode,
                             const std::deque<Filter_Data>& filter_queue, 
                             std::mutex& queue_mutex, 
                             double /*imu_period*/)
@@ -47,9 +47,7 @@ bool ScanProcessing::unwrap(pcl::PointCloud<PointXYZT> &in,
     out.clear(); 
     out.reserve(in.points.size());
 
-    // =========================================================
-    // 1. REAL DURATION ANALYSIS (Hz Robustness)
-    // =========================================================
+    // 1. Duration Analysis
     bool has_time_channel = false;
     double max_rel_time = 0.0;
 
@@ -59,12 +57,12 @@ bool ScanProcessing::unwrap(pcl::PointCloud<PointXYZT> &in,
         double t_val = 0.0;
         bool valid_pt_time = false;
 
-        // OUSTER Case (t = nanoseconds relative to start)
+        // Ouster
         if (m_lidar_type == "ouster" && pt.t > 0) {
             t_val = static_cast<double>(pt.t) * 1e-9;
             valid_pt_time = true;
         } 
-        // HESAI Case (timestamp = absolute seconds)
+        // Hesai
         else if (m_lidar_type == "hesai") {
             t_val = pt.timestamp - scan_header_time;
             valid_pt_time = true;
@@ -76,45 +74,36 @@ bool ScanProcessing::unwrap(pcl::PointCloud<PointXYZT> &in,
         }
     }
 
-    // Effective scan duration
+    // Scan duration
     double actual_duration = 0.0;
     if (has_time_channel && max_rel_time > 0.001) {
-        actual_duration = max_rel_time; // Real measurement (Robust to 7.5Hz)
+        actual_duration = max_rel_time; 
         
-        // Specific correction for HESAI if absolute times overflow
+        // Hesai correction
         if (m_lidar_type == "hesai" && std::abs(actual_duration) > 1.0) {
             actual_duration = lidar_period_param; 
         }
     } else {
-        actual_duration = lidar_period_param; // Fallback
+        actual_duration = lidar_period_param; 
     }
 
     if (actual_duration > 0.3) actual_duration = lidar_period_param;
 
-    // =========================================================
-    // 2. DEFINE REAL SCAN START (Ouster Mapping)
-    // =========================================================
+    // 2. Scan Start Time
     
     double scan_start_time_abs = scan_header_time;
 
-    // OUSTER DRIVER NAMING LOGIC:
-    // If mode is "TIME_FROM_ROS_TIME", stamp is when msg arrives -> END of scan.
+    // Ouster Naming Logic
     if (timestamp_mode == "TIME_FROM_ROS_TIME") {
         scan_start_time_abs = scan_header_time - actual_duration;
     } 
-    // If mode is "TIME_FROM_PTP_1588", "TIME_FROM_INTERNAL_OSC", etc.
-    // Stamp is hardware -> START of scan (Default Ouster behavior).
     else {
-        // We assume Start of Scan by default for PTP/GPS/Internal
         scan_start_time_abs = scan_header_time;
     }
 
-    // Target is always the physical end of the sweep
     double target_deskew_time = scan_start_time_abs + actual_duration;
 
-    // =========================================================
-    // 3. GET IMU SNAPSHOT
-    // =========================================================
+    // 3. IMU Snapshot
     std::vector<Filter_Data> imu_snapshot;
     imu_snapshot.reserve(200);
     
@@ -131,8 +120,7 @@ bool ScanProcessing::unwrap(pcl::PointCloud<PointXYZT> &in,
 
         double last_imu_time = filter_queue.back().timestamp;
         
-        // 2. Detailed Sync Error Log
-        // We use a temporary "ScanDebug" logger to show up in ROS console
+        // Sync Error Log
         if (last_imu_time < target_deskew_time - 0.005) {
             auto logger = rclcpp::get_logger("ScanDebug");
             double missing_time = target_deskew_time - last_imu_time;
@@ -162,9 +150,7 @@ bool ScanProcessing::unwrap(pcl::PointCloud<PointXYZT> &in,
 
     if (imu_snapshot.size() < 2) return false;
 
-    // =========================================================
-    // 4. CALCULATE BASE POSE (T_base) at Target Time
-    // =========================================================
+    // 4. Calculate Base Pose
     auto it_target = std::lower_bound(imu_snapshot.begin(), imu_snapshot.end(), target_deskew_time, 
          [](const Filter_Data& a, double t){ return a.timestamp < t; });
     
@@ -187,9 +173,7 @@ bool ScanProcessing::unwrap(pcl::PointCloud<PointXYZT> &in,
     }
     tf2::Transform T_base_inv = T_base.inverse();
 
-    // =========================================================
-    // 5. CORRECTION LOOP
-    // =========================================================
+    // 5. Correction Loop
     auto it_imu = imu_snapshot.begin();
     int num_points = in.points.size();
 
@@ -198,25 +182,25 @@ bool ScanProcessing::unwrap(pcl::PointCloud<PointXYZT> &in,
         const auto& pt = in.points[i];
         if (!std::isfinite(pt.x)) continue;
 
-        // --- A. Point Absolute Time ---
+        // A. Point Time
         double point_timestamp_abs = 0.0;
 
         if (has_time_channel) {
             if (m_lidar_type == "ouster") {
-                // Relative to calculated START
+                // Relative Start
                 point_timestamp_abs = scan_start_time_abs + static_cast<double>(pt.t) * 1e-9;
             } 
             else if (m_lidar_type == "hesai") {
-                // Hesai is absolute, ignore relative start/end calculation
+                // Absolute
                 point_timestamp_abs = pt.timestamp;
             }
         } else {
-            // Linear Interpolation (Fallback)
+            // Fallback
             double ratio = static_cast<double>(i) / static_cast<double>(num_points);
             point_timestamp_abs = scan_start_time_abs + (ratio * actual_duration);
         }
 
-        // --- B. Find IMU ---
+        // B. Find IMU
         while (std::next(it_imu) != imu_snapshot.end() && std::next(it_imu)->timestamp < point_timestamp_abs) {
             it_imu++;
         }
@@ -224,7 +208,7 @@ bool ScanProcessing::unwrap(pcl::PointCloud<PointXYZT> &in,
         auto next_it = std::next(it_imu);
         tf2::Transform T_i;
 
-        // --- C. Interpolate Pose (T_i) ---
+        // C. Interpolate Pose
         if (next_it == imu_snapshot.end()) {
             T_i.setOrigin({it_imu->x, it_imu->y, it_imu->z});
             T_i.setRotation({it_imu->qx, it_imu->qy, it_imu->qz, it_imu->qw});
@@ -240,7 +224,7 @@ bool ScanProcessing::unwrap(pcl::PointCloud<PointXYZT> &in,
             T_i.setOrigin(p_i); T_i.setRotation(q_i);
         }
 
-        // --- D. Project ---
+        // D. Project
         tf2::Vector3 pt_vec(pt.x, pt.y, pt.z);
         tf2::Vector3 pt_corrected = (T_base_inv * T_i) * pt_vec;
 
@@ -251,11 +235,11 @@ bool ScanProcessing::unwrap(pcl::PointCloud<PointXYZT> &in,
 }
 void ScanProcessing::downsample(const pcl::PointCloud<PointXYZT>& in, pcl::PointCloud<PointXYZT>& out)
 {
-    // 1. Precalcular distancias al cuadrado para optimizar el rendimiento (evitar std::sqrt)
+    // 1. Squared distances
     double min_range_sq = m_min_range * m_min_range;
     double max_range_sq = m_max_range * m_max_range;
 
-    // 2. Caso donde NO hay downsample (leaf_size muy pequeño) pero SÍ queremos aplicar el filtro de rango
+    // 2. No Downsample
     if (m_leaf_size <= 0.001) {
         out.points.clear();
         out.points.reserve(in.points.size());
@@ -263,7 +247,7 @@ void ScanProcessing::downsample(const pcl::PointCloud<PointXYZT>& in, pcl::Point
         for (const auto& p : in.points) {
             if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z)) continue;
             
-            // Filtro de distancia
+            // Range filter
             double distance_sq = p.x * p.x + p.y * p.y + p.z * p.z;
             if (distance_sq >= min_range_sq && distance_sq <= max_range_sq) {
                 out.points.push_back(p);
@@ -276,14 +260,14 @@ void ScanProcessing::downsample(const pcl::PointCloud<PointXYZT>& in, pcl::Point
         return;
     }
 
-    // 3. Caso normal: Voxel Grid + Filtro de rango
+    // 3. Normal Downsample
     std::map<std::tuple<int, int, int>, PointXYZT> grid;
     double inv_leaf_size = 1.0 / m_leaf_size;
 
     for (const auto& p : in.points) {
         if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z)) continue;
         
-        // Aplicar el filtro de rango ANTES de hacer los cálculos del Voxel
+        // Range Filter
         double distance_sq = p.x * p.x + p.y * p.y + p.z * p.z;
         if (distance_sq < min_range_sq || distance_sq > max_range_sq) continue;
         
@@ -293,13 +277,13 @@ void ScanProcessing::downsample(const pcl::PointCloud<PointXYZT>& in, pcl::Point
 
         auto idx = std::make_tuple(ix, iy, iz);
         
-        // Guardar solo si el voxel está vacío (Estrategia del primer punto)
+        // First point strategy
         if (grid.find(idx) == grid.end()) {
             grid[idx] = p;
         }
     }
 
-    // 4. Reconstruir la nube de salida
+    // 4. Reconstruct Cloud
     out.points.clear();
     out.points.reserve(grid.size());
     for (const auto& kv : grid) {

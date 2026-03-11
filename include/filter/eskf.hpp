@@ -66,7 +66,7 @@ public:
 		T2 = _T * _T;
 		calibTime = _calibTime;
 
-		// Inicialización del estado nominal
+		// Nominal State Initialization
 		p = Eigen::Vector3d(x_init, y_init, z_init);
 		v.setZero();
 		
@@ -79,7 +79,7 @@ public:
 		ba.setZero();
 		bg.setZero();
 
-		// Configuración del buffer de calibración
+		// Calibration Buffer
 		if(calibTime == 0.0) {
 			calibSize = 1;
 		} else {
@@ -90,7 +90,7 @@ public:
 		calibData.resize(calibSize);
 		calibIndex = 0;
 
-		// Inicialización de covarianza (Error state: 15x15)
+		// Covariance Initialization
 		P.setZero();
 
 		init = false;
@@ -100,35 +100,33 @@ public:
 	}
 
 	// Input: last sensor_msgs::Imu
-	// Input: last sensor_msgs::Imu
 	bool initialize(sensor_msgs::msg::Imu &msg, double init_abx = 0.0, double init_aby = 0.0, double init_abz = 0.0)
 	{
 
 		if (calibSize <= 1 || calibTime < 0.1) {
             
-            // A. Bias a CERO (Asumimos sensor ideal)
+            // A. Zero Bias
             bg.setZero(); 
             ba = Eigen::Vector3d(init_abx, init_aby, init_abz);
             
-            // B. Gravedad Teórica (o la magnitud calibrada 9.73 si la sabes fija)
+            // B. Gravity
             gravity = Eigen::Vector3d(0.0, 0.0, -9.81); 
 
-            // C. IMPORTANTE: NO recalculamos Roll/Pitch.
-            // Mantenemos la 'q' intacta tal cual vino de setup() (valores del YAML).
+            // C. Keep Orientation
             
             RCLCPP_WARN(rclcpp::get_logger("ESKF"), 
                 "MOVING START (CalibTime=0). Skipping IMU alignment. Using YAML Pose.");
             
             init = true;
-            return true; // <--- SALIMOS AQUÍ, antes de calcular nada mal.
+            return true;
         }
-		// 1. Llenar el buffer de calibración
+		// 1. Fill Buffer
 		calibData[calibIndex++ % calibSize] = msg;
 		
 		if(calibIndex < calibSize)
 			return false;
 		
-		// 2. Calcular Medias
+		// 2. Calculate Means
 		double gx_m = 0.0, gy_m = 0.0, gz_m = 0.0;
 		double ax_m = 0.0, ay_m = 0.0, az_m = 0.0;
 		int samples = calibData.size();
@@ -147,27 +145,19 @@ public:
 		gx_m /= samples; gy_m /= samples; gz_m /= samples;
 		ax_m /= samples; ay_m /= samples; az_m /= samples;
 
-		// -----------------------------------------------------------------------
-		// 3. INICIALIZACIÓN DEL ESTADO (CORREGIDA)
-		// -----------------------------------------------------------------------
+		// 3. State Initialization
 
-		// A. Calcular Roll y Pitch basados en la gravedad (Acelerómetro)
-		// Asumiendo sistema estándar: X-Front, Y-Left, Z-Up
-		// ax = -g * sin(pitch)
-		// ay = g * cos(pitch) * sin(roll)
-		// az = g * cos(pitch) * cos(roll)
+		// A. Roll/Pitch from Gravity
 		
 		double roll  = std::atan2(ay_m, az_m);
 		double pitch = std::atan2(-ax_m, std::sqrt(ay_m*ay_m + az_m*az_m));
 
-		// B. RECUPERAR EL YAW INICIAL (CRÍTICO)
-		// El 'q' actual contiene la rotación del setup (incluyendo m_init_yaw).
-		// Extraemos el Yaw actual para no perderlo.
+		// B. Recover Initial Yaw
 		double siny_cosp = 2.0 * (q.w() * q.z() + q.x() * q.y());
 		double cosy_cosp = 1.0 - 2.0 * (q.y() * q.y() + q.z() * q.z());
 		double current_yaw = std::atan2(siny_cosp, cosy_cosp);
 
-		// C. Reconstruir el Cuaternión: (Yaw Original) * (Pitch Nuevo) * (Roll Nuevo)
+		// C. Reconstruct Quaternion
 		Eigen::AngleAxisd rollAngle(roll, Eigen::Vector3d::UnitX());
 		Eigen::AngleAxisd pitchAngle(pitch, Eigen::Vector3d::UnitY());
 		Eigen::AngleAxisd yawAngle(current_yaw, Eigen::Vector3d::UnitZ());
@@ -175,18 +165,18 @@ public:
 		q = yawAngle * pitchAngle * rollAngle;
 		q.normalize();
 
-		// D. Inicializar Bias y Velocidad (Igual que antes)
+		// D. Initialize Bias/Vel
 		bg = Eigen::Vector3d(gx_m, gy_m, gz_m);
 		ba = Eigen::Vector3d(init_abx, init_aby, init_abz);
 		v.setZero();
 
-		// 4. Inicialización de Covarianza (P) - Igual que antes
+		// 4. Covariance Initialization
 		P.setZero();
-		P.block<3,3>(0,0).diagonal().fill(1e-4);   // Pos
-		P.block<3,3>(3,3).diagonal().fill(1e-4);   // Vel
-		P.block<3,3>(6,6).diagonal().fill(1e-5);   // Ori
-		P.block<3,3>(9,9).diagonal().fill(1e-3);   // Bias Acc
-		P.block<3,3>(12,12).diagonal().fill(1e-4); // Bias Gyr
+		P.block<3,3>(0,0).diagonal().fill(1e-4);   
+		P.block<3,3>(3,3).diagonal().fill(1e-4);   
+		P.block<3,3>(6,6).diagonal().fill(1e-5);   
+		P.block<3,3>(9,9).diagonal().fill(1e-3);   
+		P.block<3,3>(12,12).diagonal().fill(1e-4);
 
 		if(calibTime == 0.0){
 			RCLCPP_WARN(rclcpp::get_logger("ESKF"), "Calibration skipped. Bias 0.");
@@ -194,7 +184,7 @@ public:
 		} else {
 			RCLCPP_INFO(rclcpp::get_logger("ESKF"), "Calibration Done. Samples: %d", samples);
 			RCLCPP_INFO_STREAM(rclcpp::get_logger("ESKF"), "Init Gyro Bias: " << bg.transpose());
-			// Log para verificar que el Yaw se ha mantenido
+			// Log Orientation
 			RCLCPP_INFO(rclcpp::get_logger("ESKF"), "Init Orientation (RPY): %.4f, %.4f, %.4f", roll, pitch, current_yaw);
 		}
 
@@ -211,11 +201,11 @@ public:
 		// Check initialization 
     	if(!init) return false;
         
-		// 0. Preparar datos y paso de tiempo
+		// 0. Time Step
 		T = dt;
 		T2 = dt * dt;
 
-		// Vectorizar inputs (Mediciones crudas)
+		// Vectors
 		Eigen::Vector3d acc_meas(ax, ay, az);
 		Eigen::Vector3d gyr_meas(gx, gy, gz);
 
@@ -223,7 +213,7 @@ public:
 		Eigen::Vector3d gyr_unbiased = gyr_meas - bg;
 
         Eigen::Matrix3d R = q.toRotationMatrix();
-    	Eigen::Vector3d acc_world = R * acc_unbiased + gravity; // Aceleración en marco mundo
+    	Eigen::Vector3d acc_world = R * acc_unbiased + gravity;
 
 		p = p + v * T + 0.5 * acc_world * T2;
     	v = v + acc_world * T;
@@ -231,81 +221,67 @@ public:
 		Eigen::Vector3d angle_vec = gyr_unbiased * T;
 		double angle_norm = angle_vec.norm();
 		
-		if (angle_norm > 1e-8) { // Evitar división por cero si estamos muy quietos
+		if (angle_norm > 1e-8) { 
 			Eigen::AngleAxisd delta_rot(angle_norm, angle_vec.normalized());
-			q = q * delta_rot; // Orden: q_global = q_old * q_delta (rotación local)
-			q.normalize();     // Vital normalizar siempre para evitar drift numérico
+			q = q * delta_rot; 
+			q.normalize();
 		}
 
 		Eigen::Matrix<double, 15, 15> F = Eigen::Matrix<double, 15, 15>::Identity();
 
-		// Bloque Posición-Velocidad (dp / dv) -> I * dt
+		// Pos-Vel
 		F.block<3,3>(0,3) = Eigen::Matrix3d::Identity() * T;
 
-		// Bloque Velocidad-Orientación (dv / dtheta) -> -R * [a]x * dt
-		// Este es el término crítico que conecta inclinación con aceleración
+		// Vel-Ori
 		F.block<3,3>(3,6) = -R * skew(acc_unbiased) * T;
 
-		// Bloque Velocidad-BiasAccel (dv / dba) -> -R * dt
+		// Vel-BiasAcc
 		F.block<3,3>(3,9) = -R * T;
 
-		// Bloque Orientación-BiasGyro (dtheta / dbg) -> -I * dt
+		// Ori-BiasGyr
 		F.block<3,3>(6,12) = -Eigen::Matrix3d::Identity() * T;
 
-		// B. Construir Matriz de Ruido Q (Discreta)
-		// Q diagonal simplificada para el proceso
+		// B. Noise Matrix Q
 		Eigen::Matrix<double, 15, 15> Q = Eigen::Matrix<double, 15, 15>::Zero();
 		
-		// Ruido Posición/Velocidad (Integrado del acelerómetro)
-		// V = acc_noise * dt
+		// Vel Noise
 		double sigma_acc_dt = acc_dev * T;
-		double sigma_acc_dt2 = sigma_acc_dt * T; // Ruido pos es de segundo orden (opcional)
+		double sigma_acc_dt2 = sigma_acc_dt * T; 
 		
-		Q.block<3,3>(3,3).diagonal().fill(sigma_acc_dt * sigma_acc_dt); // Ruido Vel
-		// Q.block<3,3>(0,0) ... Ruido posición explícito es muy pequeño, suele dejarse a 0 o muy bajo
+		Q.block<3,3>(3,3).diagonal().fill(sigma_acc_dt * sigma_acc_dt);
 
-		// Ruido Orientación (Integrado del Gyro)
+		// Ori Noise
 		double sigma_gyr_dt = gyr_dev * T;
 		Q.block<3,3>(6,6).diagonal().fill(sigma_gyr_dt * sigma_gyr_dt);
 
-		// Ruido Random Walk de los Bias (Bias cambia muy lento)
-		double var_ba_rw = acc_rw_dev * acc_rw_dev * T; // sigma^2 * dt
-		double var_bg_rw = gyr_rw_dev * gyr_rw_dev * T; // sigma^2 * dt
+		// Bias Random Walk
+		double var_ba_rw = acc_rw_dev * acc_rw_dev * T;
+		double var_bg_rw = gyr_rw_dev * gyr_rw_dev * T; 
 
 		Q.block<3,3>(9,9).diagonal().fill(var_ba_rw);
 		Q.block<3,3>(12,12).diagonal().fill(var_bg_rw);
 
-		// C. Actualizar P
-		// P_new = F * P_old * F_transposed + Q
-		// Nota: Si quieres optimizar velocidad, puedes multiplicar por bloques manualmente,
-		// pero con Eigen esto suele ser suficientemente rápido (< 10us).
+		// C. Update P
 		P = F * P * F.transpose() + Q;
 		
-		// -----------------------------------------------------------------------
-		// 3. LOGGING (Opcional, para debug)
-		// -----------------------------------------------------------------------
-		// Guardamos variables para visualización (igual que tenías antes)
-		gxf = gx; gyf = gy; gzf = gz; // Guardar crudos para debug
-		
-		// Escribir en CSV (Asegúrate de actualizar qué escribes aquí porque rx, ry ya no existen)
-		// Puedes extraer Roll/Pitch/Yaw de q para loguear:
+		// 3. LOGGING
+		gxf = gx; gyf = gy; gzf = gz; 
 		
 		odom_file << std::fixed << std::setprecision(0)
 				<< stamp * 1e9 << "," << sec << "," << stamp * 1e9 << ","  
 				<< std::fixed << std::setprecision(9)
 				<< p.x() << "," << p.y() << "," << p.z() << ","
-				<< q.x() << "," << q.y() << "," << q.z() << "," << q.w() << "," // Euler estimado
+				<< q.x() << "," << q.y() << "," << q.z() << "," << q.w() << "," 
 				<< v.x() << "," << v.y() << "," << v.z() << ","
-				<< bg.x() << "," << bg.y() << "," << bg.z() << "," // Bias Gyro
-				<< ba.x() << "," << ba.y() << "," << ba.z() << "\n"; // Bias Accel
+				<< bg.x() << "," << bg.y() << "," << bg.z() << "," 
+				<< ba.x() << "," << ba.y() << "," << ba.z() << "\n"; 
 				
 		sec++;
 		return true; 
 	}
 
 
-	// Update SOLO con Pose (Posición + Cuaternión)
-    // Eficiente y estable: Deja que el filtro estime la velocidad internamente.
+	// Pose Update
     bool update_pose(const Eigen::Vector3d& meas_p, 
                      const Eigen::Quaterniond& meas_q, 
                      double var_pos, double var_ori, 
@@ -313,59 +289,46 @@ public:
     {
         if(!init) return false;
 
-        // 1. CALCULAR RESIDUALES (Innovación)
-        // ------------------------------------
-        // A. Posición
+        // 1. RESIDUALS
+        // A. Position
         Eigen::Vector3d y_p = meas_p - p;
 
-        // B. Orientación (Diferencia de Cuaterniones)
+        // B. Orientation
         Eigen::Quaterniond q_err = q.conjugate() * meas_q; 
         q_err.normalize();
         double sign_check = (q_err.w() >= 0) ? 1.0 : -1.0;
         Eigen::Vector3d y_theta = sign_check * 2.0 * q_err.vec(); 
 
-        // Vector Residual Total (Ahora es 6x1 en vez de 9x1)
+        // Vector
         Eigen::VectorXd y(6);
         y << y_p, y_theta;
 
-        // 2. MATRICES DEL KALMAN (H, R)
-        // -----------------------------
+        // 2. MATRICES (H, R)
         
-        // Matriz H (6x15): Mapea Estado (15) a Medición (6)
-        // Observamos: Posición (indices 0-2) y Orientación (indices 6-8)
-        // Saltamos la Velocidad (indices 3-5)
+        // H (6x15)
         Eigen::Matrix<double, 6, 15> H;
         H.setZero();
-        H.block<3,3>(0,0).setIdentity(); // Medimos Posición
-        // H.block<3,3>(?,3) -> Velocidad NO la medimos
-        H.block<3,3>(3,6).setIdentity(); // Medimos Orientación (Ojo: indice 3 en H corresponde a 6 en Estado)
-
-        // Matriz R (6x6): Ruido de la medición
+        H.block<3,3>(0,0).setIdentity(); 
+        H.block<3,3>(3,6).setIdentity(); 
+        
+        // R (6x6)
         Eigen::Matrix<double, 6, 6> R_cov;
         R_cov.setZero();
         R_cov.block<3,3>(0,0).diagonal().fill(var_pos);
         R_cov.block<3,3>(3,3).diagonal().fill(var_ori);
 
-        // 3. PASO DE CORRECCIÓN
-        // ---------------------
+        // 3. CORRECTION
         
-        // S = H * P * Ht + R
         Eigen::Matrix<double, 6, 6> S = H * P * H.transpose() + R_cov;
-
-        // K = P * Ht * S_inv
         Eigen::Matrix<double, 15, 6> K = P * H.transpose() * S.inverse();
-
-        // Delta X = K * y (Vector de error de 15x1)
         Eigen::VectorXd delta_x = K * y;
 
         // Update P
         P = (Eigen::Matrix<double, 15, 15>::Identity() - K * H) * P;
 
-        // 4. INYECCIÓN DEL ERROR (Igual que siempre)
-        // ----------------------
+        // 4. INJECT ERROR
         p  += delta_x.segment<3>(0);
-        v  += delta_x.segment<3>(3); // <-- IMPORTANTE: ¡Aquí SÍ se corrige la velocidad!
-                                     // El filtro deduce "si estaba más lejos de lo que pensaba, es que iba más rápido".
+        v  += delta_x.segment<3>(3); 
         ba += delta_x.segment<3>(9);
         bg += delta_x.segment<3>(12);
 
@@ -381,7 +344,7 @@ public:
         q = q * dq; 
         q.normalize(); 
 
-        // 5. Logging (Igual)
+        // 5. Logging
         odom_file << std::fixed << std::setprecision(0)
                 << stamp * 1e9 << "," << sec << "," << stamp * 1e9 << ","  
                 << std::fixed << std::setprecision(9)
@@ -397,7 +360,7 @@ public:
     }
 	bool getEuler(double &roll, double &pitch, double &yaw)
     {
-        // Convierte el cuaternión interno a matriz de rotación y extrae Euler XYZ
+        // Extact Yaw/Pitch/Roll
         Eigen::Vector3d euler = q.toRotationMatrix().eulerAngles(0, 1, 2);
         
         roll  = euler[0];
@@ -407,7 +370,7 @@ public:
         return true;
     }
 
-    // 2. Obtener Cuaternión (x, y, z, w)
+    // Get Quaternion
     bool getQuat(double &qx, double &qy, double &qz, double &qw)
     {
         qx = q.x();
@@ -422,7 +385,7 @@ public:
 		return sec;
 	}
 
-	// Obtener Velocidades Globales
+    // Get Global Velocities
     bool getVelocities(double &vx_, double &vy_, double &vz_)
     {
         vx_ = v.x();
@@ -431,7 +394,7 @@ public:
         return true;
     }
 
-    // Obtener Posición
+    // Get Position
     bool getposition(double &x_, double &y_, double &z_)
     {
         x_ = p.x();
@@ -440,7 +403,7 @@ public:
         return true;
     }
 
-    // Obtener Bias del Giroscopio
+    // Get Gyro Bias
     bool getBIAS(double &gbx_, double &gby_, double &gbz_)
     {
         gbx_ = bg.x();
@@ -459,18 +422,17 @@ public:
 protected:
 
 	
-	// --- ESKF State ---
+	// State
     Eigen::Vector3d p;    // Posición Global
     Eigen::Vector3d v;    // Velocidad Global
     Eigen::Quaterniond q; // Orientación (Body -> Global)
     Eigen::Vector3d ba;   // Bias Acelerómetro
     Eigen::Vector3d bg;   // Bias Giroscopio
 
-    // --- ESKF Covariance ---
-    // Orden: [delta_p, delta_v, delta_theta, delta_ba, delta_bg]
+    // Covariance
     Eigen::Matrix<double, 15, 15> P;
 
-    // --- Parámetros y Auxiliares ---
+    // Parameters
     double acc_dev, gyr_dev;
     double acc_rw_dev, gyr_rw_dev;
     double T, T2;
@@ -478,10 +440,10 @@ protected:
     bool init;
 
 	Eigen::Vector3d gravity; 
-    double gxf, gyf, gzf;    // Añadidos para logging
+    double gxf, gyf, gzf; 
 
 
-    // --- Calibración y Logs ---
+    // Calibration/Logs
     double calibTime;
     int calibIndex, calibSize;
     std::vector<sensor_msgs::msg::Imu> calibData;
@@ -503,7 +465,7 @@ protected:
 		return floor( value );
 	}
 
-	//! Convert angles into interval [-PI,0,PI]
+	// Convert to [-PI, PI]
 	double Pi2PiRange(double cont_angle)
 	{
 		double bound_angle = 0.0;

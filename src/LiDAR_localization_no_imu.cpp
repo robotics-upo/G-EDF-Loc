@@ -7,14 +7,12 @@ namespace g_edf_loc
 LiDARLocalizationNoIMU::LiDARLocalizationNoIMU(const rclcpp::NodeOptions & options)
 : Node("lidar_localization_no_imu", options)
 {
-  // Load Parameters
   loadParameters();
   RCLCPP_INFO(this->get_logger(), BOLD_GRN "LiDAR Localization (No IMU) Node Initialized" RST);
   
   m_tfBuffer = std::make_shared<tf2_ros::Buffer>(this->get_clock());
   m_tfListener = std::make_shared<tf2_ros::TransformListener>(*m_tfBuffer);
   
-  // Open files for logging
   time_log_file_.open("execution_times.txt", std::ios::out);
   if (time_log_file_.is_open()) {
     time_log_file_ << "Deskew,Downsample,Optimization,Total,OriginalPoints,DownsampledPoints,Iterations" << std::endl;
@@ -47,7 +45,6 @@ LiDARLocalizationNoIMU::~LiDARLocalizationNoIMU()
 
 void LiDARLocalizationNoIMU::loadParameters()
 {
-  // Declare parameters with default values
   this->declare_parameter<std::string>("odom_frame", "odom");
   this->declare_parameter<std::string>("base_frame", "base_link");
   this->declare_parameter<std::string>("lidar_topic", "/velodyne_points");
@@ -69,12 +66,10 @@ void LiDARLocalizationNoIMU::loadParameters()
   this->declare_parameter<double>("min_range", 1.0);
   this->declare_parameter<double>("max_range", 100.0);
   
-  // Solver Parameters
   this->declare_parameter<int>("solver_max_iter", 75);
   this->declare_parameter<int>("solver_num_threads", 4);
   this->declare_parameter<double>("robust_kernel_scale", 1.0);
 
-  // Get parameters
   this->get_parameter("odom_frame", odom_frame_);
   this->get_parameter("base_frame", base_frame_);
   this->get_parameter("lidar_topic", lidar_topic_);
@@ -160,9 +155,7 @@ void LiDARLocalizationNoIMU::pointcloudCallback(const sensor_msgs::msg::PointClo
 {
     double scan_time = rclcpp::Time(msg->header.stamp).seconds();
     
-    // -----------------------------------------------------------------------
-    // 1. TF & PREPROCESADO
-    // -----------------------------------------------------------------------
+    // 1. TF & Preprocessing
     if (!m_tfPointCloudCache) {	
         try {
             m_staticTfPointCloud = m_tfBuffer->lookupTransform(
@@ -182,7 +175,6 @@ void LiDARLocalizationNoIMU::pointcloudCallback(const sensor_msgs::msg::PointClo
     pcl::transformPointCloud(pcl_cloud, transformed_cloud, transform_matrix);
     RCLCPP_INFO(this->get_logger(), "DEBUG: Starting Downsample (Points in: %lu)", transformed_cloud.size());
 
-    // Downsample & Timing
     auto start_ds = std::chrono::high_resolution_clock::now();
     pcl::PointCloud<PointXYZT> cloud_downsampled;
     scan_processor_.downsample(transformed_cloud, cloud_downsampled);
@@ -200,9 +192,7 @@ void LiDARLocalizationNoIMU::pointcloudCallback(const sensor_msgs::msg::PointClo
     int original_points = transformed_cloud.size();
     int downsampled_points = c.size();
     
-    // -----------------------------------------------------------------------
-    // 2. INICIALIZACIÓN
-    // -----------------------------------------------------------------------
+    // 2. Initialization
     if (!initialized_)
     {
         m_x_last = m_x; m_y_last = m_y; m_z_last = m_z;
@@ -217,38 +207,26 @@ void LiDARLocalizationNoIMU::pointcloudCallback(const sensor_msgs::msg::PointClo
     double dt_step = scan_time - m_last_scan_time;
     if (dt_step < 0.001) dt_step = 0.001; 
 
-    // -----------------------------------------------------------------------
-    // 3. PREDICCIÓN: GUESS ESTÁTICO (Modelo de Posición Constante)
-    // -----------------------------------------------------------------------
-    // Asumimos que no nos hemos movido. Dejamos que el solver encuentre el movimiento real.
-    // Esto evita divergencias en giros sin IMU.
+    // 3. Prediction (Static Guess)
     double x_sol = m_x;
     double y_sol = m_y;
     double z_sol = m_z;
     Eigen::Quaterniond q_sol = m_q; 
 
-    // -----------------------------------------------------------------------
-    // 4. OPTIMIZACIÓN
-    // -----------------------------------------------------------------------
+    // 4. Optimization
     auto start_opt = std::chrono::high_resolution_clock::now();
     
-    // El solver intentará alinear la nube actual con el mapa partiendo de la pose anterior.
     bool converged = solver_->solve(c, x_sol, y_sol, z_sol, q_sol);
     
     auto end_opt = std::chrono::high_resolution_clock::now();
 
-    // -----------------------------------------------------------------------
-    // 5. ACTUALIZACIÓN DE ESTADO
-    // -----------------------------------------------------------------------
+    // 5. State Update
     if (converged) {
-        // Guardamos la nueva pose
         m_x = x_sol; 
         m_y = y_sol; 
         m_z = z_sol;
         m_q = q_sol;
         
-        // CÁLCULO DE VELOCIDAD OBSERVADA
-        // (Posición Nueva - Posición Antigua) / Tiempo
         m_vx = (m_x - m_x_last) / dt_step;
         m_vy = (m_y - m_y_last) / dt_step;
         m_vz = (m_z - m_z_last) / dt_step;
@@ -256,27 +234,22 @@ void LiDARLocalizationNoIMU::pointcloudCallback(const sensor_msgs::msg::PointClo
 
     } else {
         RCLCPP_WARN(this->get_logger(), "Solver failed! Staying still.");
-        // Si falla, asumimos velocidad 0 y mantenemos posición
         m_vx = 0.0; m_vy = 0.0; m_vz = 0.0;
     }
     
     m_last_scan_time = scan_time;
     m_x_last = m_x; m_y_last = m_y; m_z_last = m_z;
     
-    // -----------------------------------------------------------------------
-    // 6. LOGS Y DATOS (CON RPY)
-    // -----------------------------------------------------------------------
+    // 6. Logs & Data
     int iterations = solver_->getFinalNumIterations();
     double time_ds_ms = std::chrono::duration<double, std::milli>(end_ds - start_ds).count();
     double time_opt_ms = std::chrono::duration<double, std::milli>(end_opt - start_opt).count();
     double total_ms = time_ds_ms + time_opt_ms;
 
-    // Calcular RPY para visualización en consola
     tf2::Quaternion q_tf(m_q.x(), m_q.y(), m_q.z(), m_q.w());
     double roll, pitch, yaw;
     tf2::Matrix3x3(q_tf).getRPY(roll, pitch, yaw);
 
-    // PRINT DETALLADO
     RCLCPP_INFO(this->get_logger(), 
         "Time: %.1fms (DS: %.1f, Opt: %.1f) | Pose: (%.2f, %.2f, %.2f) | RPY: (%.3f, %.3f, %.3f) | Vel: (%.2f, %.2f)",
         total_ms, time_ds_ms, time_opt_ms,
@@ -284,7 +257,6 @@ void LiDARLocalizationNoIMU::pointcloudCallback(const sensor_msgs::msg::PointClo
         roll, pitch, yaw,
         m_vx, m_vy);
 
-    // Archivo de Tiempos
     if (time_log_file_.is_open()) {
       time_log_file_ << "0," 
                      << time_ds_ms << "," 
@@ -293,7 +265,6 @@ void LiDARLocalizationNoIMU::pointcloudCallback(const sensor_msgs::msg::PointClo
                      << original_points << "," << downsampled_points << "," << iterations << std::endl;
     }
 
-    // Archivo de Predicción
     if (predict_file_.is_open()) {
         predict_file_ << std::fixed << std::setprecision(0)
                 << scan_time * 1e9 << "," << 0 << "," << scan_time * 1e9 << ","  
@@ -305,7 +276,6 @@ void LiDARLocalizationNoIMU::pointcloudCallback(const sensor_msgs::msg::PointClo
                 << 0.0 << "," << 0.0 << "," << 0.0 << "\n"; 
     }
 
-    // Publicar Odometría
     nav_msgs::msg::Odometry odom_msg;
     odom_msg.header.stamp = msg->header.stamp;
     odom_msg.header.frame_id = odom_frame_;
@@ -322,7 +292,6 @@ void LiDARLocalizationNoIMU::pointcloudCallback(const sensor_msgs::msg::PointClo
     odom_msg.twist.twist.linear.z = m_vz;
     pose_pub_->publish(odom_msg);
 
-    // Publicar TF
     geometry_msgs::msg::TransformStamped tf_msg;
     tf_msg.header = odom_msg.header;
     tf_msg.child_frame_id = base_frame_;
@@ -332,7 +301,6 @@ void LiDARLocalizationNoIMU::pointcloudCallback(const sensor_msgs::msg::PointClo
     tf_msg.transform.rotation = odom_msg.pose.pose.orientation;
     tf_broadcaster_->sendTransform(tf_msg);
     
-    // Publicar Nube Deskewed
     if (deskewed_pub_->get_subscription_count() > 0) {
         pcl::PointCloud<pcl::PointXYZ> pcl_out;
         pcl_out.width = c.size();

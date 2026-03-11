@@ -15,7 +15,7 @@
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 
-// ROS Logs (para warnings)
+// ROS
 #include "rclcpp/rclcpp.hpp"
 
 #include "gaussian_map/gaussian_map.hpp" 
@@ -27,7 +27,7 @@ using ceres::Solve;
 using gaussian_map::GaussianMap;
 
 // -------------------------------------------------------------------------
-// COST FUNCTION ANALÍTICA (CORREGIDA PARA GAUSSDF SIGMA^4)
+// Analytic Cost Function
 // -------------------------------------------------------------------------
 class DLL6DAnalyticCostFunction : public ceres::SizedCostFunction<1, 3, 4> {
 public:
@@ -38,9 +38,7 @@ public:
                           double* residuals,
                           double** jacobians) const override {
         
-        // ---------------------------------------------------------------------
-        // 1. EXTRACCIÓN Y TRANSFORMACIÓN
-        // ---------------------------------------------------------------------
+        // 1. Extraction and Transformation
         const double tx = parameters[0][0];
         const double ty = parameters[0][1];
         const double tz = parameters[0][2];
@@ -49,26 +47,18 @@ public:
         const double qy = parameters[1][2];
         const double qz = parameters[1][3];
 
-        // Normalizar cuaternión (Crítico para estabilidad)
         Eigen::Quaterniond Q(qw, qx, qy, qz);
         Q.normalize(); 
         
         Eigen::Vector3d P_local(px_, py_, pz_);
         Eigen::Vector3d P_world = Q * P_local + Eigen::Vector3d(tx, ty, tz);
 
-        // ---------------------------------------------------------------------
-        // 2. CONSULTA AL MAPA (GAUSS DISTANCE FIELD)
-        // ---------------------------------------------------------------------
+        // 2. Map Query
         auto map_res = grid_.evaluateWithGradient(P_world.x(), P_world.y(), P_world.z());
 
-        // ---------------------------------------------------------------------
-        // 3. MANEJO DE ZONAS FUERA DEL MAPA (Safety Clamp)
-        // ---------------------------------------------------------------------
-        // Si el valor es muy alto (>= 19.0), estamos fuera de rango.
+        // 3. Out-of-bounds Check
         if (map_res.value >= 19.0) {
-            residuals[0] = weight_ * 5.0; // Residuo constante (outlier)
-
-            // Anulamos Jacobianos
+            residuals[0] = weight_ * 5.0;
             if (jacobians != NULL) {
                 if (jacobians[0]) std::fill_n(jacobians[0], 3, 0.0);
                 if (jacobians[1]) std::fill_n(jacobians[1], 4, 0.0);
@@ -76,65 +66,58 @@ public:
             return true;
         }
 
-        // ---------------------------------------------------------------------
-        // 4. CÁLCULO DEL RESIDUO
-        // ---------------------------------------------------------------------
+        // 4. Residual Calculation
         residuals[0] = weight_ * map_res.value;
 
-        // ---------------------------------------------------------------------
-        // 5. CÁLCULO DE JACOBIANOS ANALÍTICOS (CON CLAMPING)
-        // ---------------------------------------------------------------------
+        // 5. Jacobians
         if (jacobians != NULL) {
-            // Gradiente del Mapa (g) ponderado
             Eigen::Vector3d g = weight_ * map_res.gradient;
 
-            // --- NUEVO: GRADIENT CLAMPING ---
-            // Protege al solver de las "paredes verticales" de sigma^4.
+            // Gradient Clamping
             double g_norm = g.norm();
-            double max_grad_norm = 10.0; // Valor seguro empírico
+            double max_grad_norm = 10.0;
             
             if (g_norm > max_grad_norm) {
                 g = g * (max_grad_norm / g_norm);
             }
-            // -------------------------------
 
-            // --- A. Jacobiano respecto a TRASLACIÓN ---
+            // Translation Jacobian
             if (jacobians[0] != NULL) {
                 jacobians[0][0] = g.x();
                 jacobians[0][1] = g.y();
                 jacobians[0][2] = g.z();
             }
 
-            // --- B. Jacobiano respecto a ROTACIÓN (Cuaternión) ---
+            // Rotation Jacobian
             if (jacobians[1] != NULL) {
                 Eigen::Vector3d v(Q.x(), Q.y(), Q.z());
                 Eigen::Vector3d p = P_local;
 
-                // 1. Derivada respecto a qw (Parte Escalar)
+                Eigen::Vector3d p = P_local;
                 Eigen::Vector3d v_cross_p = v.cross(p);
                 jacobians[1][0] = g.dot(2.0 * v_cross_p);
 
-                // 2. Derivada respecto a qx, qy, qz (Parte Vectorial)
+                jacobians[1][0] = g.dot(2.0 * v_cross_p);
                 double _2x = 2.0 * Q.x();
                 double _2y = 2.0 * Q.y();
                 double _2z = 2.0 * Q.z();
                 double _2w = 2.0 * Q.w();
 
-                // -- Respecto a qx --
+                double _2w = 2.0 * Q.w();
                 Eigen::Vector3d dRx;
                 dRx[0] = 0.0 * p.x() + _2y * p.y() + _2z * p.z();
                 dRx[1] = _2y * p.x() - 2.0 * _2x * p.y() - _2w * p.z();
                 dRx[2] = _2z * p.x() + _2w * p.y() - 2.0 * _2x * p.z();
                 jacobians[1][1] = g.dot(dRx);
 
-                // -- Respecto a qy --
+                jacobians[1][1] = g.dot(dRx);
                 Eigen::Vector3d dRy;
                 dRy[0] = -2.0 * _2y * p.x() + _2x * p.y() + _2w * p.z();
                 dRy[1] = _2x * p.x() + 0.0 * p.y() + _2z * p.z();
                 dRy[2] = -_2w * p.x() + _2z * p.y() - 2.0 * _2y * p.z();
                 jacobians[1][2] = g.dot(dRy);
 
-                // -- Respecto a qz --
+                jacobians[1][2] = g.dot(dRy);
                 Eigen::Vector3d dRz;
                 dRz[0] = -2.0 * _2z * p.x() - _2w * p.y() + _2x * p.z();
                 dRz[1] = _2w * p.x() - 2.0 * _2z * p.y() + _2y * p.z();
@@ -151,7 +134,7 @@ private:
 };
 
 // -------------------------------------------------------------------------
-// SOLVER PRINCIPAL
+// Main Solver
 // -------------------------------------------------------------------------
 class DLL6DSolver
 {
@@ -180,33 +163,25 @@ class DLL6DSolver
     bool setRobustKernelScale(double s) { _robusKernelScale = s; return true; }
     int getFinalNumIterations() const { return _last_num_iterations; }
 
-    // ---------------------------------------------------------
-    // HERRAMIENTA DE DEBUG: ANALIZAR ALINEAMIENTO
-    // ---------------------------------------------------------
+    // Debugging Tool
     void analyzeAlignment(const std::vector<pcl::PointXYZ>& cloud, 
                           double tx, double ty, double tz, 
                           const Eigen::Quaterniond& q) 
     {
-        // (Opcional: puedes dejar este código para depuración si lo necesitas)
-        // ... (código previo de analyzeAlignment) ...
     }
 
-    // ---------------------------------------------------------
-    // SOLVE (ESTRATEGIA COARSE-TO-FINE)
-    // ---------------------------------------------------------
+    // Solver
     bool solve(const std::vector<pcl::PointXYZ> &cloud, double &tx, double &ty, double &tz, 
                                                         Eigen::Quaterniond &q_in_out)
     {
-        // Preparar parámetros iniciales
+        double t_param[3] = { tx, ty, tz };
         double t_param[3] = { tx, ty, tz };
         q_in_out.normalize();
         double q_param[4] = { q_in_out.w(), q_in_out.x(), q_in_out.y(), q_in_out.z() };
 
         _last_num_iterations = 0;
 
-        // =========================================================
-        // ETAPA 1: COARSE (Atrapar giros sin IMU)
-        // =========================================================
+        // Stage 1: Coarse
         {
             Problem problem_coarse;
             problem_coarse.AddParameterBlock(t_param, 3);
@@ -219,8 +194,7 @@ class DLL6DSolver
                 problem_coarse.AddParameterBlock(q_param, 4, quaternion_manifold);
             #endif
 
-            // Scale amplio (1.0) para capturar puntos lejanos tras un giro.
-            // Si el YAML dice menos de 1.0, forzamos 1.0 en esta etapa.
+            double coarse_scale = std::max(_robusKernelScale, 3.0);
             double coarse_scale = std::max(_robusKernelScale, 3.0);
             ceres::LossFunction* loss_coarse = new ceres::CauchyLoss(coarse_scale);
 
@@ -235,18 +209,17 @@ class DLL6DSolver
             options.trust_region_strategy_type = ceres::DOGLEG;
             options.minimizer_progress_to_stdout = false;
             
-            // Configuración "Basta"
-            options.max_num_iterations = 20;       // Corto alcance
-            options.function_tolerance = 1e-2; // RELAXED: Exit as soon as you are "close enough"
-            options.gradient_tolerance = 1e-4; // RELAXED            
+            options.minimizer_progress_to_stdout = false;
+            
+            options.max_num_iterations = 20; 
+            options.function_tolerance = 1e-2; 
+            options.gradient_tolerance = 1e-4; 
             Solver::Summary summary;
             Solve(options, &problem_coarse, &summary);
             _last_num_iterations += summary.num_successful_steps;
         }
 
-        // =========================================================
-        // ETAPA 2: FINE (Eliminar ruido y vibración)
-        // =========================================================
+        // Stage 2: Fine
         {
             Problem problem_fine;
             problem_fine.AddParameterBlock(t_param, 3);
@@ -259,7 +232,7 @@ class DLL6DSolver
                 problem_fine.AddParameterBlock(q_param, 4, quaternion_manifold);
             #endif
 
-            // Scale estricto (0.2) para ignorar ramas, gente y ruido sigma^4.
+            ceres::LossFunction* loss_fine = new ceres::CauchyLoss(0.5); 
             ceres::LossFunction* loss_fine = new ceres::CauchyLoss(0.5); 
 
             for(const auto& point : cloud) {
@@ -272,9 +245,10 @@ class DLL6DSolver
             options.num_threads = _max_threads;
             options.trust_region_strategy_type = ceres::DOGLEG;
             
-            // Configuración "Fina"
-            options.max_num_iterations = 15;        // Pulido final
-            options.function_tolerance = 1e-6;      // Precisión alta
+            options.trust_region_strategy_type = ceres::DOGLEG;
+            
+            options.max_num_iterations = 15;        
+            options.function_tolerance = 1e-6;      
             options.gradient_tolerance = 1e-10;
             options.parameter_tolerance = 1e-8;
 
@@ -283,14 +257,13 @@ class DLL6DSolver
             _last_num_iterations += summary.num_successful_steps;
         }
 
-        // Actualizar variables de salida
+        tx = t_param[0];
         tx = t_param[0];
         ty = t_param[1];
         tz = t_param[2];
         q_in_out = Eigen::Quaterniond(q_param[0], q_param[1], q_param[2], q_param[3]);
         q_in_out.normalize();
 
-        // Consideramos que siempre converge si ha pasado por las dos etapas sin explotar
         return true; 
     }
 };

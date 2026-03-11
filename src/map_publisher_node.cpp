@@ -19,7 +19,7 @@ public:
         // Parameters
         this->declare_parameter("map_path", "");
         this->declare_parameter("map_frame", "map");
-        this->declare_parameter("resolution", 0.5); // Default 0.2m (seguro)
+        this->declare_parameter("resolution", 0.5);
         this->declare_parameter("iso_threshold", 0.001);
         this->declare_parameter("output_filename", "");
 
@@ -40,7 +40,7 @@ public:
             }
         }
 
-        // Publisher (Latched QoS for map)
+        // Publisher
         rclcpp::QoS qos(rclcpp::KeepLast(1));
         qos.transient_local();
         map_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("visualization_map", qos);
@@ -60,36 +60,29 @@ private:
     {
         (void)request;
         
-        // --- ESTRATEGIA DE CAJA GRANDE (WORKAROUND) ---
-        // Como 'gaussian_map.hpp' no tiene getMinY/Z, definimos un rango
-        // lo suficientemente grande para cubrir cualquier dataset típico (Newer College, Snail, etc).
-        // El mapa del Newer College es aprox 250m x 150m.
-        // Ponemos +/- 300m para ir sobrados.
+        // Define Bounds
         
         double min_x = -40.0; double max_x = 40.0;
         double min_y = -40.0; double max_y = 40.0;
-        double min_z = -50.0;  double max_z = 500.0; // Altura típicamente menor
+        double min_z = -50.0;  double max_z = 500.0;
 
-        // Si tenemos los de X, los usamos para acotar un poco al menos en ese eje
-        // (Aunque tu header tiene getMinX, a veces es mejor usar fijo si no te fías de la inicialización)
-        // min_x = map_.getMinX(); 
-        // max_x = map_.getMaxX();
+
 
         RCLCPP_INFO(this->get_logger(), "Generando mapa completo en rango de búsqueda: X[%.0f, %.0f] Y[%.0f, %.0f]", min_x, max_x, min_y, max_y);
         RCLCPP_INFO(this->get_logger(), "Resolución: %.3f m | Threshold: %.4f", resolution_, iso_threshold_);
 
-        // PROTECCIÓN: Si la resolución es muy fina, ajustamos para evitar crash de RAM
+        // Resolution Protection
         if (resolution_ < 0.1) {
-            RCLCPP_WARN(this->get_logger(), "Resolución < 0.1 detectada. Ajustando a 0.2m para evitar desbordamiento de memoria.");
+            RCLCPP_WARN(this->get_logger(), "Resolution < 0.1 detected. Adjusting to 0.2m.");
             resolution_ = 0.2;
         }
 
         pcl::PointCloud<pcl::PointXYZI>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZI>);
         
-        // Estimación de memoria (aprox 200k puntos)
+        // Memory Estimation
         cloud->points.reserve(200000); 
 
-        // BUCLE DE GENERACIÓN
+        // Generation Loop
         int checked_voxels = 0;
         int valid_voxels = 0;
 
@@ -97,14 +90,12 @@ private:
             for (double y = min_y; y <= max_y; y += resolution_) {
                 for (double z = min_z; z <= max_z; z += resolution_) {
                     
-                    // ESTA LÍNEA ES LA CLAVE DE LA VELOCIDAD:
-                    // isIntoGrid usa un hash map (std::map), es muy rápido.
-                    // Si devuelve false, saltamos el cálculo pesado.
+                    // Check valid voxel
                     if (!map_.isIntoGrid(x, y, z)) continue;
 
                     double val = map_.getDistanceAt(x, y, z);
                     
-                    // Filtro de isosuperficie
+                    // Isosurface Filter
                     if (val > iso_threshold_) {
                         pcl::PointXYZI p;
                         p.x = x; 
@@ -124,13 +115,13 @@ private:
         cloud->header.frame_id = map_frame_;
 
         if (cloud->points.empty()) {
-            RCLCPP_WARN(this->get_logger(), "Nube vacía. El mapa podría estar fuera del rango +/-300m o el iso_threshold es muy alto.");
+            RCLCPP_WARN(this->get_logger(), "Empty cloud generated.");
             response->success = false;
             response->message = "Generated cloud empty.";
             return;
         }
 
-        // Publicar
+        // Publish
         sensor_msgs::msg::PointCloud2 msg;
         pcl::toROSMsg(*cloud, msg);
         msg.header.stamp = this->now();
@@ -140,14 +131,14 @@ private:
         std::string result_msg = "Mapa publicado. Puntos totales: " + std::to_string(cloud->points.size());
         RCLCPP_INFO(this->get_logger(), "%s", result_msg.c_str());
 
-        // Guardar fichero si se especificó
+        // Save to File
         if (!output_filename_.empty()) {
             if (pcl::io::savePCDFileBinaryCompressed(output_filename_, *cloud) == 0) {
                  result_msg += " Guardado en " + output_filename_;
-                 RCLCPP_INFO(this->get_logger(), "PCD guardado exitosamente: %s", output_filename_.c_str());
+                 RCLCPP_INFO(this->get_logger(), "PCD saved: %s", output_filename_.c_str());
             } else {
                  result_msg += " ERROR al guardar fichero.";
-                 RCLCPP_ERROR(this->get_logger(), "Fallo al guardar PCD: %s", output_filename_.c_str());
+                 RCLCPP_ERROR(this->get_logger(), "Failed to save PCD: %s", output_filename_.c_str());
             }
         }
 
