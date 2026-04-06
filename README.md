@@ -1,6 +1,8 @@
 <h1 align="center"><a href="https://arxiv.org/abs/2509.20081" style="text-decoration:none;color:inherit;">G-EDF-Loc: 3D Continuous Gaussian Distance Field for Robust Gradient-Based 6DoF Localization</a></h1>
 
 <div align="center">
+  <a href="https://robotics-upo.github.io/G-EDF/"><img src="https://img.shields.io/badge/Project-Website-007acc?style=flat" alt="Project Website"></a>
+  &nbsp;
   <a href="#"><img src="https://img.shields.io/badge/arXiv-Paper-b31b1b?style=flat&logo=arxiv" alt="arXiv Paper"></a>
 </div>
 
@@ -137,3 +139,10 @@ Deskew,Downsample,Optimization,Total,OriginalPoints,DownsampledPoints,Iterations
 * **Deskew / Downsample / Optimization / Total:** Execution time breakdown for each pipeline stage.
 * **OriginalPoints / DownsampledPoints:** Tracks the point reduction.
 * **Iterations:** Number of steps the Ceres solver took to converge for that specific scan.
+
+
+## Acknowledgements
+
+![Logos](docs/media/fondos_proyectos.png)
+
+This work was supported by the grants PICRA 4.0 (PLEC2023-010353), funded by the Spanish Ministry of Science and Innovation and the Spanish Research Agency (MCIN/AEI/10.13039/501100011033); and COBUILD (PID2024-161069OB-C31), funded by the Spanish Ministry of Science, Innovation and Universities, the Spanish Research Agency (MICIU/AEI/10.13039/501100011033) and the European Regional Development Fund (FEDER, UE).
