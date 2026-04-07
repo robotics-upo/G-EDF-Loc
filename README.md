@@ -3,7 +3,7 @@
 <div align="center">
   <a href="https://robotics-upo.github.io/G-EDF/"><img src="https://img.shields.io/badge/Project-Website-007acc?style=flat" alt="Project Website"></a>
   &nbsp;
-  <a href="#"><img src="https://img.shields.io/badge/arXiv-Paper-b31b1b?style=flat&logo=arxiv" alt="arXiv Paper"></a>
+  <a href="https://arxiv.org/abs/2604.04525"><img src="https://img.shields.io/badge/arXiv-Paper-b31b1b?style=flat&logo=arxiv" alt="arXiv Paper"></a>
 </div>
 
  
